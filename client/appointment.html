@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Doctor Appointment Widget</title>
+<style>
+  /* --- Widget Styling --- */
+  .doc-widget {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 350px;
+    background: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    box-sizing: border-box;
+  }
+  .doc-widget h3 {
+    margin-top: 0;
+    color: #333;
+    font-size: 1.2rem;
+    text-align: center;
+  }
+  .doc-widget label {
+    display: block;
+    font-size: 0.9rem;
+    color: #555;
+    margin-bottom: 5px;
+    margin-top: 15px;
+    font-weight: 500;
+  }
+  .doc-widget input[type="text"],
+  .doc-widget input[type="email"],
+  .doc-widget input[type="date"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    box-sizing: border-box;
+    font-size: 0.95rem;
+  }
+  .doc-widget input:focus {
+    outline: none;
+    border-color: #0066cc;
+    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+  }
+  /* Time Slots Grid */
+  .time-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 5px;
+  }
+  .time-slot {
+    padding: 8px;
+    text-align: center;
+    background: #f4f6f8;
+    border: 1px solid #dce0e4;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #333;
+    transition: all 0.2s ease;
+  }
+  .time-slot:hover {
+    background: #e6f0ff;
+    border-color: #0066cc;
+  }
+  .time-slot.selected {
+    background: #0066cc;
+    color: #fff;
+    border-color: #0066cc;
+  }
+  /* Captcha */
+  .captcha-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .captcha-question {
+    background: #eee;
+    padding: 10px;
+    border-radius: 6px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    user-select: none;
+  }
+  .doc-widget button[type="submit"] {
+    width: 100%;
+    padding: 12px;
+    background: #0066cc;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 600;
+    margin-top: 20px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .doc-widget button[type="submit"]:hover {
+    background: #0052a3;
+  }
+  .loader {
+    font-size: 0.85rem;
+    color: #666;
+    text-align: center;
+    margin-top: 10px;
+    display: none;
+  }
+  .message {
+    padding: 10px;
+    border-radius: 6px;
+    margin-top: 15px;
+    display: none;
+    font-size: 0.9rem;
+    text-align: center;
+  }
+  .msg-success { background: #d4edda; color: #155724; }
+  .msg-error { background: #f8d7da; color: #721c24; }
+</style>
+</head>
+<body>
+
+<!-- Widget Container -->
+<div class="doc-widget" id="docWidget">
+  <h3>Book an Appointment</h3>
+  
+  <form id="appointmentForm">
+    <!-- Date Picker -->
+    <label for="docDate">Select Date:</label>
+    <input type="date" id="docDate" required min="" />
+    
+    <!-- Time Slots (Populated by JS) -->
+    <div id="timeContainer" style="display:none;">
+      <label>Available Times:</label>
+      <div class="loader" id="timeLoader">Fetching times...</div>
+      <div class="time-grid" id="timeGrid"></div>
+      <input type="hidden" id="selectedTime" required />
+    </div>
+
+    <!-- Patient Details -->
+    <label for="childName">Child Name:</label>
+    <input type="text" id="childName" placeholder="Enter child's full name" required />
+
+    <label for="emailAddr">Email Address:</label>
+    <input type="email" id="emailAddr" placeholder="parent@example.com" required />
+
+    <!-- Simple Math Captcha -->
+    <label>Security Check:</label>
+    <div class="captcha-box">
+      <div class="captcha-question" id="captchaQuestion">? + ?</div>
+      <input type="text" id="captchaAnswer" placeholder="Answer" required autocomplete="off" />
+    </div>
+
+    <button type="submit">Book Appointment</button>
+  </form>
+
+  <div id="formMessage" class="message"></div>
+</div>
+
+<!-- Widget Logic -->
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const dateInput = document.getElementById('docDate');
+  const timeContainer = document.getElementById('timeContainer');
+  const timeLoader = document.getElementById('timeLoader');
+  const timeGrid = document.getElementById('timeGrid');
+  const selectedTimeInput = document.getElementById('selectedTime');
+  const form = document.getElementById('appointmentForm');
+  const messageBox = document.getElementById('formMessage');
+  
+  // Set minimum date to today
+  const today = new Date().toISOString().split('T')[0];
+  dateInput.setAttribute('min', today);
+
+  // Captcha Setup
+  let expectedCaptchaResult = 0;
+  function generateCaptcha() {
+    const num1 = Math.floor(Math.random() * 10) + 1;
+    const num2 = Math.floor(Math.random() * 10) + 1;
+    expectedCaptchaResult = num1 + num2;
+    document.getElementById('captchaQuestion').textContent = `${num1} + ${num2} =`;
+    document.getElementById('captchaAnswer').value = '';
+  }
+  generateCaptcha();
+
+  // Handle Date Selection & "API" Fetch
+  dateInput.addEventListener('change', async (e) => {
+    const selectedDate = e.target.value;
+    if (!selectedDate) return;
+
+    // Reset UI
+    timeContainer.style.display = 'block';
+    timeGrid.innerHTML = '';
+    selectedTimeInput.value = '';
+    timeLoader.style.display = 'block';
+    
+    // ---------------------------------------------------------
+    // MOCK API CALL: Replace this block with your actual fetch()
+    // ---------------------------------------------------------
+    const fetchAvailableTimes = new Promise((resolve) => {
+      setTimeout(() => {
+        // Simulate times returned from a server API
+        const mockTimes = ["09:00 AM", "09:30 AM", "10:00 AM", "11:30 AM", "01:00 PM", "02:30 PM"];
+        resolve(mockTimes);
+      }, 800); // simulate network delay
+    });
+
+    try {
+      const times = await fetchAvailableTimes;
+      timeLoader.style.display = 'none';
+      
+      if(times.length === 0) {
+        timeGrid.innerHTML = '<span style="grid-column: span 3; color:red; font-size: 0.85rem;">No times available.</span>';
+        return;
+      }
+
+      // Render Time Slot Buttons
+      times.forEach(time => {
+        const slot = document.createElement('div');
+        slot.className = 'time-slot';
+        slot.textContent = time;
+        
+        slot.addEventListener('click', () => {
+          // Deselect others
+          document.querySelectorAll('.time-slot').forEach(el => el.classList.remove('selected'));
+          // Select clicked
+          slot.classList.add('selected');
+          selectedTimeInput.value = time;
+        });
+        
+        timeGrid.appendChild(slot);
+      });
+    } catch (error) {
+      timeLoader.textContent = "Failed to load times.";
+    }
+  });
+
+  // Handle Form Submission
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    messageBox.style.display = 'none';
+
+    // 1. Check Time Selection
+    if (!selectedTimeInput.value) {
+      showMessage('Please select an appointment time.', 'msg-error');
+      return;
+    }
+
+    // 2. Validate Captcha
+    const userAnswer = parseInt(document.getElementById('captchaAnswer').value, 10);
+    if (userAnswer !== expectedCaptchaResult) {
+      showMessage('Incorrect security check answer. Try again.', 'msg-error');
+      generateCaptcha();
+      return;
+    }
+
+    // 3. Gather Data
+    const formData = {
+      date: dateInput.value,
+      time: selectedTimeInput.value,
+      childName: document.getElementById('childName').value,
+      email: document.getElementById('emailAddr').value
+    };
+
+    // ---------------------------------------------------------
+    // SEND DATA TO YOUR API HERE via fetch()
+    // ---------------------------------------------------------
+    console.log("Submitting Appointment Data:", formData);
+
+    // Simulate Success
+    showMessage('Appointment successfully requested!', 'msg-success');
+    form.reset();
+    timeContainer.style.display = 'none';
+    generateCaptcha(); // Reset captcha for next use
+  });
+
+  // Helper to show messages
+  function showMessage(text, className) {
+    messageBox.textContent = text;
+    messageBox.className = `message ${className}`;
+    messageBox.style.display = 'block';
+  }
+});
+</script>
+
+</body>
+</html>
